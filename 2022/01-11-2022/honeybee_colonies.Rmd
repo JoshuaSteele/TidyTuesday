@@ -1,0 +1,54 @@
+---
+title: "Honeybee Colonies"
+author: "Joshua Steele"
+date: "1/12/2022"
+output: html_document
+---
+
+# Some quick data prep
+
+```{r Prep}
+library(tidyverse)
+library(tidytuesdayR)
+library(skimr)
+
+tuesdata <- tidytuesdayR::tt_load('2022-01-11')
+
+colony_raw <- tuesdata[[1]]
+stressor_raw <- tuesdata[[2]]
+
+# I'm used to doing this in r base as opposed to with a mutate() or similar function
+stressor_raw$stressor[stressor_raw$stressor == "Disesases"] <- "Diseases"
+
+combined <- colony_raw %>% full_join(stressor_raw, by = c("year", "months", "state")) %>%
+    mutate(quarter = case_when(
+          months == "January-March" ~ 1, 
+          months == "April-June" ~ 2, 
+          months == "July-September" ~ 3, 
+          months == "October-December" ~ 4)) %>%
+    mutate(stressor = factor(stressor, levels = c("Pesticides", "Diseases", 
+                                                  "Varroa mites", "Other pests/parasites", 
+                                                  "Other", "Unknown"))) %>%
+    mutate(yearqtr = year + (quarter - 1) / 4)
+
+
+```
+
+# and a simple visualization focused on AZ
+
+```{r Figure, fig.width = 4, fig.height = 6}
+
+
+combined_az <- combined %>% filter(state == "Arizona")
+
+
+combined_az %>% ggplot(aes(x = yearqtr, y = stress_pct)) + 
+  geom_col() + 
+  facet_wrap(vars(stressor), ncol = 1) + 
+  scale_x_continuous(name = "Year", breaks = 2015:2021) +
+  scale_y_continuous(name = "% Bee Colonies Affected by Stressor in AZ", labels = scales::percent_format(scale = 1, accuracy=1)) +
+  labs(caption = "Source: USDA")
+
+ggsave("bee_colonies_stressors_az.png", width = 8, height = 12, dpi = 320)
+
+```

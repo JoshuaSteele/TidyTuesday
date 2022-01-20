@@ -1,0 +1,122 @@
+---
+title: "Chocolate Ratings"
+author: "Joshua Steele"
+date: "1/18/2022"
+output: html_document
+---
+
+# Data Loading + Cleaning
+
+```{r data_loading, echo = T, results='hide', warning = F, message = F}
+
+library(tidyverse)
+library(skimr)
+library(jsonlite)
+
+# Countries-Continent data from: https://annexare.github.io/Countries/
+countries_raw <- fromJSON('https://raw.githubusercontent.com/annexare/Countries/master/data/countries.json')
+countries <- enframe(countries_raw) %>%
+  unnest(c(value))
+
+countries <- slice(countries, which(names(countries$value) %in% c("name", "continent")))
+
+
+# There may be a fancy function that does this with less code, 
+# but I form a new tibble based on the "name" and "continent" from 
+# the sliced countries. Now we have two columns: (1) country, and (2) continent
+countries <- tibble(country = as.factor(sapply(countries$value[1:length(countries$value) %% 2 == 1], 
+                                  FUN = function(x) unlist(x))),
+       continent_abbr = as.factor(sapply(countries$value[1:length(countries$value) %% 2 == 0], 
+                          FUN = function(x) unlist(x))))
+
+# map abbreviations to full name
+countries$continent <- 
+  factor(case_when(
+    countries$continent_abbr == "NA" ~ "North America",
+    countries$continent_abbr == "EU" ~ "Europe",
+    countries$continent_abbr == "AS" ~ "Asia",
+    countries$continent_abbr == "AF" ~ "Africa",
+    countries$continent_abbr == "SA" ~ "South America",
+    countries$continent_abbr == "OC" ~ "Oceania",
+    countries$continent_abbr == "AN" ~ "Antarctica"))
+
+
+# Read in the tidytuesday dataset
+chocolate <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-18/chocolate.csv')
+
+# Have a looksie
+skim(chocolate)
+
+```
+
+# Data Wrangling
+
+```{r data_wrangling}
+
+# calculate avg continent ratings when grouped by company_location
+continent_ratings_by_company <- chocolate %>% 
+  group_by(company_location) %>%
+  summarize(avg_country_rating = mean(rating)) %>% 
+  merge(countries, by.x = "company_location", by.y = "country")  %>%
+  group_by(continent) %>%
+  summarize(avg_continent_rating = mean(avg_country_rating))
+
+
+# calculate avg continent ratings when grouped by country_of_bean_origin
+continent_ratings_by_origin <- chocolate %>% 
+  group_by(country_of_bean_origin) %>%
+  summarize(avg_country_rating = mean(rating)) %>% 
+  merge(countries, by.x = "country_of_bean_origin", by.y = "country")  %>%
+  group_by(continent) %>%
+  summarize(avg_continent_rating = mean(avg_country_rating))
+
+continent_ratings_by_company
+continent_ratings_by_origin
+  
+```
+
+# Plotting 
+
+```{r plotting, fig.height = 8, fig.width = 6}
+# create plot grouping by company_location
+chocolate %>% 
+  mutate(company_location = factor(company_location)) %>%
+  group_by(company_location) %>%
+  summarize(avg_country_rating = mean(rating)) %>%
+  merge(countries, by.x = "company_location", by.y = "country") %>%
+  merge(continent_ratings_by_company, by = "continent") %>%
+  mutate(company_location = fct_reorder(company_location, avg_continent_rating)) %>%
+  ggplot(aes(x = reorder(company_location, desc(company_location)), y = avg_country_rating, fill = continent)) +
+  geom_col() +
+  labs(x = "Country in Which Choco Company Located",
+       y = "Average Chocolate Rating",
+       caption = "Sources: Flavors of Cacao (chocolate data), Annexare (country-continent data)") +
+  scale_y_continuous(limits = c(0,4), expand = c(0,0)) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_flip()
+
+ggsave("company_location.png", dpi = 300)
+
+
+# create plot grouping by country_of_bean_origin
+chocolate %>% 
+  mutate(country_of_bean_origin = factor(country_of_bean_origin)) %>%
+  group_by(country_of_bean_origin) %>%
+  summarize(avg_country_rating = mean(rating)) %>%
+  merge(countries, by.x = "country_of_bean_origin", by.y = "country") %>%
+
+  merge(continent_ratings_by_origin, by = "continent") %>%
+  mutate(country_of_bean_origin = fct_reorder(country_of_bean_origin, avg_continent_rating)) %>%
+  ggplot(aes(x = reorder(country_of_bean_origin, desc(country_of_bean_origin)), y = avg_country_rating, fill = continent)) +
+  geom_col() +
+  labs(x = "Country of Bean Origin",
+       y = "Average Chocolate Rating",
+       caption = "Sources: Flavors of Cacao (chocolate data), Annexare (country-continent data)") +
+  scale_y_continuous(limits = c(0,4), expand = c(0,0)) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_flip()
+
+ggsave("bean_origin.png", dpi = 300)
+
+```
+
