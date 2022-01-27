@@ -1,0 +1,145 @@
+---
+title: "Tidy Tuesday Week 4, Board Games"
+author: "Joshua Steele"
+date: "1/25/2022"
+output: html_document
+---
+
+First basic data cleaning 
+
+```{r}
+library(ggwordcloud)
+library(showtext)
+library(tidyverse)
+library(ggtext)
+
+# Load Data
+ratings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/ratings.csv')
+details <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/details.csv')
+
+ratings <- as.tibble(ratings)
+details <- as.tibble(details)
+
+# Data Wrangling
+combined <- ratings %>% 
+  full_join(details, by="id") %>%
+  select(id, year, rank, average, boardgamecategory, boardgamemechanic)
+
+combined_clean <- combined %>%
+  mutate(boardgamemechanic = str_sub(boardgamemechanic, 3, -3)) %>%
+  mutate(boardgamemechanic = str_replace_all(boardgamemechanic, fixed('\"'), "\'")) %>%   # replace " escaped with ' escaped for Prisoner's Dilemma
+  mutate(boardgamemechanic = str_split(boardgamemechanic,"', '")) %>% 
+  unnest(boardgamemechanic)
+
+```
+
+Next run a pca on boardgamemechanics by year and create biplot to see if any natural groupings.
+
+```{r, fig.width = 8, fig.height = 8}
+pca_results <- combined_clean %>% 
+  filter(year >= 1990, year < 2022, !is.na(boardgamemechanic)) %>%
+  group_by(year, boardgamemechanic) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  mutate(year = as.factor(year)) %>%
+  pivot_wider(names_from = boardgamemechanic, 
+              values_from = count,
+              values_fill = 0) %>%
+  column_to_rownames(var = "year") %>%
+  prcomp(scale=TRUE) 
+
+
+biplot(pca_results, scale=0)
+
+
+
+```
+From this plot we can see 6, maybe 5 groups of years. We'll stick with 6:
+
+1990-2003
+2004-2008
+2009-2013
+2014-2015
+2016-2018
+2019-2021
+
+Now to more wrangling:
+
+```{r}
+combine_clean_by_period <- combined_clean %>% 
+  filter(year >= 1990, year < 2022, !is.na(boardgamemechanic)) %>%
+  mutate(period = as.factor(case_when(
+        year < 2004 ~ "1990-2003",
+        year < 2009 ~ "2004-2008",
+        year < 2014 ~ "2009-2013",
+        year < 2016 ~ "2014-2015",
+        year < 2019 ~ "2016-2018",
+        year < 2022 ~ "2019-2021")))
+
+games_per_period <- 
+  combined %>%
+  filter(year >= 1990, year < 2022, !is.na(boardgamemechanic)) %>%
+  mutate(period = case_when(
+        year < 2004 ~ 1,
+        year < 2009 ~ 2,
+        year < 2014 ~ 3,
+        year < 2016 ~ 4,
+        year < 2019 ~ 5,
+        year < 2022 ~ 6)) %>%
+  group_by(period) %>%
+  summarize(count = n())
+
+```
+
+
+Finally plotting:
+
+```{r fig.width = 12, fig.height = 16}
+
+
+# Fonts
+font_add_google("Roboto Condensed","roboto")
+showtext_opts(dpi = 96)
+showtext_auto(enable = TRUE)
+
+combined_filtered <- combine_clean_by_period %>% 
+  group_by(period, boardgamemechanic) %>%
+  summarize(count = n()) %>%
+  mutate(count_standardized = count / games_per_period$count[period]) %>%
+  filter(count_standardized >= 0.03, count_standardized <= 0.2) %>% # remove mechanics present in less than 3% or more than 20% of games
+  ungroup()
+
+
+set.seed(123)
+combined_filtered %>% 
+  ggplot(aes(
+          label = boardgamemechanic,
+          color = count_standardized,
+          size = count_standardized),
+          alpha = 1) +
+  geom_text_wordcloud(area_corr=TRUE,
+                      eccentricity = 1) +
+  scale_size_area(max_size = 10) +
+  theme_minimal() +
+  theme(text=element_text(family="roboto"),
+        panel.background = element_rect(fill='#333333'),
+        strip.text.y = element_text(size = 18),
+        strip.text.y.left = element_text(angle = 0),
+        plot.subtitle = element_markdown(size = 16),
+        plot.title = element_markdown(size = 20),
+        plot.caption = element_markdown(size = 16)) +
+  scale_colour_gradient2(
+  low = "#efedf5",
+  mid = "#bcbddc",
+  high = "#756bb1",
+  midpoint = 0.1) +
+  facet_wrap(vars(period), ncol=1,
+             strip.position = "left") +
+  labs(title="**Board games ratings by decade**",
+       subtitle="The evolution of <span style='color:#756bb1'>**board game mechanic**</span> prevalence (between 3-20% prevalence) across periods from 1990 - 2021.",
+       caption="Data Source: Kaggle / Board Games Geek | Data Viz: Joshua Steele | TidyTuesday 2022: Week 4")
+
+ggsave("boardgames.png", width = 12, height = 16)
+
+```
+
